@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .present { background-color: #d4edda; }
+        .absent { background-color: #f8d7da; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        .upload-container { margin-bottom: 20px; }
+        .hidden { display: none; }
+        .serial-no { width: 50px; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>Attendance System</h1>
+    
+    <div class="upload-container">
+        <h3>Upload Student Data (Excel)</h3>
+        <input type="file" id="excelFile" accept=".xlsx, .xls">
+        <button onclick="loadStudentData()">Load Students</button>
+    </div>
+    
+    <div id="attendanceSection" class="hidden">
+        <div>
+            <label for="date">Date:</label>
+            <input type="date" id="date" required>
+            <button onclick="markAllPresent()">Mark All Present</button>
+            <button onclick="generatePDF()">Generate PDF Report</button>
+        </div>
+        
+        <table id="attendanceTable">
+            <thead>
+                <tr>
+                    <th class="serial-no">SL</th>
+                    <th>Student Name</th>
+                    <th>Student ID</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="studentList">
+                <!-- Student rows will be added here -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // Global students array
+        let students = [];
+        
+        // Load student data from Excel
+        function loadStudentData() {
+            const fileInput = document.getElementById('excelFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert("Please select an Excel file first");
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                // Get first sheet
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                
+                // Convert to JSON
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                
+                // Process data (skip header row)
+                students = [];
+                for (let i = 1; i < jsonData.length; i++) {
+                    const row = jsonData[i];
+                    if (row.length >= 3) { // Ensure we have at least 3 columns
+                        students.push({
+                            sl: i, // Serial number from Excel row
+                            name: row[1]?.toString().trim() || '',
+                            id: row[2]?.toString().trim() || ''
+                        });
+                    }
+                }
+                
+                // Remove duplicates
+                students = students.filter((student, index, self) =>
+                    index === self.findIndex((s) => (
+                        s.id === student.id && s.name === student.name
+                    ))
+                );
+                
+                // Reassign serial numbers after deduplication
+                students.forEach((student, index) => {
+                    student.sl = index + 1;
+                });
+                
+                // Initialize attendance
+                initializeAttendance();
+                document.getElementById('attendanceSection').classList.remove('hidden');
+            };
+            reader.readAsArrayBuffer(file);
+        }
+        
+        // Initialize attendance table
+        function initializeAttendance() {
+            const tableBody = document.getElementById('studentList');
+            tableBody.innerHTML = '';
+            
+            // Set today's date as default
+            document.getElementById('date').valueAsDate = new Date();
+            
+            students.forEach(student => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="serial-no">${student.sl}</td>
+                    <td>${student.name}</td>
+                    <td>${student.id}</td>
+                    <td class="absent">Absent</td>
+                    <td>
+                        <button onclick="toggleAttendance(this)">Mark Present</button>
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+        
+        // Toggle attendance status
+        function toggleAttendance(button) {
+            const row = button.parentElement.parentElement;
+            const statusCell = row.cells[3]; // Changed index due to added SL column
+            
+            if (statusCell.textContent === "Absent") {
+                statusCell.textContent = "Present";
+                statusCell.className = "present";
+                button.textContent = "Mark Absent";
+            } else {
+                statusCell.textContent = "Absent";
+                statusCell.className = "absent";
+                button.textContent = "Mark Present";
+            }
+        }
+        
+        // Mark all students present
+        function markAllPresent() {
+            const buttons = document.querySelectorAll('#studentList button');
+            buttons.forEach(button => {
+                const row = button.parentElement.parentElement;
+                const statusCell = row.cells[3]; // Changed index due to added SL column
+                
+                if (statusCell.textContent === "Absent") {
+                    statusCell.textContent = "Present";
+                    statusCell.className = "present";
+                    button.textContent = "Mark Absent";
+                }
+            });
+        }
+        
+        // Generate PDF report
+        function generatePDF() {
+            const date = document.getElementById('date').value;
+            if (!date) {
+                alert("Please select a date");
+                return;
+            }
+            
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            // Add header
+            doc.setFontSize(18);
+            doc.text(`Attendance Report - ${date}`, 14, 20);
+            
+            // Prepare table data
+            const tableData = [];
+            const rows = document.querySelectorAll('#studentList tr');
+            
+            rows.forEach(row => {
+                const cells = row.cells;
+                tableData.push([
+                    cells[0].textContent, // Serial number
+                    cells[1].textContent, // Name
+                    cells[2].textContent, // ID
+                    cells[3].textContent  // Status
+                ]);
+            });
+            
+            // Add table
+            doc.autoTable({
+                head: [['SL', 'Student Name', 'Student ID', 'Status']],
+                body: tableData,
+                startY: 30,
+                styles: { cellPadding: 5, fontSize: 10 },
+                columnStyles: {
+                    0: { cellWidth: 15, halign: 'center' }, // Serial number column
+                    1: { cellWidth: 70 }, // Name column
+                    2: { cellWidth: 40 },  // ID column
+                    3: { cellWidth: 30 }   // Status column
+                },
+                didDrawCell: (data) => {
+                    if (data.section === 'body' && data.column.index === 3) {
+                        if (data.cell.raw === 'Present') {
+                            data.cell.styles.fillColor = [212, 237, 218];
+                        } else {
+                            data.cell.styles.fillColor = [248, 215, 218];
+                        }
+                    }
+                }
+            });
+            
+            // Save PDF
+            doc.save(`Attendance_${date}.pdf`);
+        }
+    </script>
+</body>
+</html>
